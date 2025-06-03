@@ -15,3 +15,5 @@ Thumbs.db
 # Data / secrets
 *.db
 .env
+node_modules/
+.venv/

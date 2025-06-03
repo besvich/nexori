@@ -1,60 +1,78 @@
 # app/routes/admin.py
-
-from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from app import schemas, models, crud          # <-- импорт schemas обязательно!
-from app.database import SessionLocal
-from app.dependencies import get_current_active_user
+from app import models, schemas
+from app.dependencies import get_db, get_current_user
 
-router = APIRouter()
+router = APIRouter(prefix="/admin", tags=["admin"])
 
-# Зависимость для получения БД
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-@router.get(
-    "/users",
-    response_model=List[schemas.UserOut],       # Используем List[schemas.UserOut]
-    summary="Список всех пользователей (админы)"
-)
-def list_users(
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
-):
-    # Проверяем, что current_user — админ
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admins only"
-        )
-    return db.query(models.User).all()
-
-@router.patch(
-    "/users/{user_id}/role",
-    response_model=schemas.UserOut,
-    summary="Установить роль пользователю (админы)"
-)
-def update_user_role(
-    user_id: int,
-    role: str,
-    db: Session = Depends(get_db),
-    current_user: models.User = Depends(get_current_active_user)
-):
-    if current_user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admins only"
-        )
-    user = db.get(models.User, user_id)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-    user.role = role
-    db.commit()
-    db.refresh(user)
+def admin_required(user=Depends(get_current_user)):
+    if user.role != "admin":
+        raise HTTPException(status_code=403, detail="Admins only")
     return user
+
+# ---------- управление опросами ----------
+@router.post("/surveys", response_model=schemas.SurveyOut, status_code=201)
+def create_survey(
+    survey_in: schemas.SurveyCreate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(admin_required),
+):
+    survey = models.Survey(
+        title=survey_in.title,
+        description=survey_in.description,
+        questions=[
+            models.SurveyQuestion(**q.model_dump()) for q in survey_in.questions
+        ],
+        ranges=[
+            models.SurveyResultRange(**r.model_dump()) for r in survey_in.ranges
+        ],
+    )
+    db.add(survey)
+    db.commit()
+    db.refresh(survey)
+    return survey
+
+@router.put("/surveys/{survey_id}", response_model=schemas.SurveyOut)
+def update_survey(
+    survey_id: int,
+    patch: schemas.SurveyUpdate,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(admin_required),
+):
+    survey = db.get(models.Survey, survey_id)
+    if not survey:
+        raise HTTPException(404, "Survey not found")
+
+    if patch.title is not None:
+        survey.title = patch.title
+    if patch.description is not None:
+        survey.description = patch.description
+
+    if patch.questions is not None:
+        survey.questions.clear()
+        survey.questions.extend(
+            models.SurveyQuestion(**q.model_dump()) for q in patch.questions
+        )
+    if patch.ranges is not None:
+        survey.ranges.clear()
+        survey.ranges.extend(
+            models.SurveyResultRange(**r.model_dump()) for r in patch.ranges
+        )
+
+    db.commit()
+    db.refresh(survey)
+    return survey
+
+@router.delete("/surveys/{survey_id}", status_code=204)
+def delete_survey(
+    survey_id: int,
+    db: Session = Depends(get_db),
+    _: models.User = Depends(admin_required),
+):
+    survey = db.get(models.Survey, survey_id)
+    if not survey:
+        raise HTTPException(404, "Survey not found")
+    db.delete(survey)
+    db.commit()

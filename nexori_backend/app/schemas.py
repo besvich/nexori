@@ -171,3 +171,17 @@ class SurveyResponseOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+
+class ResultRangeBase(BaseModel):
+    min_score: int
+    max_score: int
+    message: str
+    
+class ResultRangeCreate(ResultRangeBase):
+    survey_id: int
+    
+class ResultRangeOut(ResultRangeBase):
+    id: int
+    class Config: from_attributes = True
